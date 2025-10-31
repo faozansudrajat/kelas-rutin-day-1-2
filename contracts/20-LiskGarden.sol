@@ -51,7 +51,7 @@ contract LiskGarden {
     }
 
     // 5. Constructor
-    constructor() {
+    constructor() payable {
         owner = msg.sender;
     }
 
@@ -153,26 +153,17 @@ contract LiskGarden {
         if (plant.stage != GrowthStage.BLOOMING) {
             uint256 timeSincePlanted = block.timestamp - plant.plantedDate;
 
-            // SEED -> SPROUT (1 * STAGE_DURATION)
-            if (
-                plant.stage == GrowthStage.SEED &&
-                timeSincePlanted >= STAGE_DURATION
-            ) {
-                plant.stage = GrowthStage.SPROUT;
+            // BLOOMING (3 * STAGE_DURATION)
+            if (timeSincePlanted >= (STAGE_DURATION * 3)) {
+                plant.stage = GrowthStage.BLOOMING;
             }
-            // SPROUT -> GROWING (2 * STAGE_DURATION)
-            else if (
-                plant.stage == GrowthStage.SPROUT &&
-                timeSincePlanted >= (STAGE_DURATION * 2)
-            ) {
+            // GROWING (2 * STAGE_DURATION)
+            else if (timeSincePlanted >= (STAGE_DURATION * 2)) {
                 plant.stage = GrowthStage.GROWING;
             }
-            // GROWING -> BLOOMING (3 * STAGE_DURATION)
-            else if (
-                plant.stage == GrowthStage.GROWING &&
-                timeSincePlanted >= (STAGE_DURATION * 3)
-            ) {
-                plant.stage = GrowthStage.BLOOMING;
+            // SPROUT (1 * STAGE_DURATION)
+            else if (timeSincePlanted >= STAGE_DURATION) {
+                plant.stage = GrowthStage.SPROUT;
             }
         }
 
@@ -187,8 +178,6 @@ contract LiskGarden {
 
         require(plant.exist, "Tidak ada plant");
         require(!plant.isDead, "Plant sudah mati");
-
-        updatePlantStage(_plantId);
         require(plant.stage == GrowthStage.BLOOMING, "Belum BLOOMING");
 
         plant.exist = false;
@@ -204,7 +193,6 @@ contract LiskGarden {
     function getPlant(uint256 _plantId) external view returns (Plant memory) {
         Plant memory plant = plants[_plantId];
 
-        require(plants[_plantId].exist, "Tidak ada plant");
         plant.waterLevel = calculateWaterLevel(_plantId);
 
         return plant;
