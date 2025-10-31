@@ -11,7 +11,7 @@ contract LiskGarden {
     }
 
     struct Plant {
-        uint256 id;
+        address owner;
         GrowthStage stage;
         uint256 plantedDate;
         uint256 lastWatered;
@@ -27,33 +27,45 @@ contract LiskGarden {
     address owner;
 
     // 3. Constants
-    uint256 constant PLANT_PRICE = 0.001 ether;
-    uint256 constant HARVEST_REWARD = 0.003 ether;
-    uint256 constant STAGE_DURATION = 1 minutes;
-    uint256 constant WATER_DEPLETION_TIME = 30 seconds;
-    uint256 constant WATER_DEPLETION_RATE = 2;
+    uint256 public constant PLANT_PRICE = 0.001 ether;
+    uint256 public constant HARVEST_REWARD = 0.003 ether;
+    uint256 public constant STAGE_DURATION = 1 minutes;
+    uint256 public constant WATER_DEPLETION_TIME = 30 seconds;
+    uint256 public constant WATER_DEPLETION_RATE = 2;
 
     // 4. Events
     event PlantSeeded(address indexed owner, uint256 indexed plantId);
     event PlantWatered(uint256 indexed plantId, uint8 newWaterLevel);
-    event PlantHarvested(uint256 indexed plantId, address indexed owner, uint256 reward);
+    event PlantHarvested(
+        uint256 indexed plantId,
+        address indexed owner,
+        uint256 reward
+    );
     event StageAdvanced(uint256 indexed plantId, GrowthStage newStage);
     event PlantDied(uint256 indexed plantId);
+
+    // + Modifier
+    modifier onlyPlantOwner(uint256 _plantId) {
+        require(plants[_plantId].owner == msg.sender, "Bukan owner");
+        _;
+    }
 
     // 5. Constructor
     constructor() {
         owner = msg.sender;
     }
 
-    // 6. Main Functions (8 functions)
-    function plantSeed() external payable returns (uint256){
+    // 6. Main Functions (6 functions)
+    // [1]
+    function plantSeed() external payable returns (uint256) {
         require(msg.value >= PLANT_PRICE, "Saldo tidak mencukupi");
 
         plantCounter += 1;
+        uint256 newPlantId = plantCounter; // Gunakan variabel lokal untuk Plant ID baru
 
-        plants[plantCounter] = Plant({
-            id: plantCounter,
-            stage:  GrowthStage.SEED,
+        plants[newPlantId] = Plant({
+            owner: msg.sender,
+            stage: GrowthStage.SEED,
             plantedDate: block.timestamp,
             lastWatered: block.timestamp,
             waterLevel: 100,
@@ -61,93 +73,151 @@ contract LiskGarden {
             isDead: false
         });
 
-        userPlants[msg.sender].push(plantCounter);
+        userPlants[msg.sender].push(newPlantId);
 
-        emit PlantSeeded(owner, plantCounter);
+        emit PlantSeeded(msg.sender, newPlantId);
 
-        return plants[plantCounter].id;
+        return newPlantId; // Mengembalikan ID baru
     }
 
-    function calculateWaterLevel(uint256 plantId) public view returns (uint8){
-        if(plants[plantId].exist == false || plants[plantId].isDead){
+    // [2]
+    function calculateWaterLevel(uint256 _plantId) public view returns (uint8) {
+        Plant storage plant = plants[_plantId];
+
+        if (!plant.exist || plant.isDead) {
             return 0;
         }
-        uint256 timeSinceWatered = block.timestamp - plants[plantId].lastWatered;
-        
-        uint256 depletionIntervals = timeSinceWatered / WATER_DEPLETION_TIME;
 
+        uint256 timeSinceWatered = block.timestamp - plant.lastWatered;
+        uint256 depletionIntervals = timeSinceWatered / WATER_DEPLETION_TIME;
         uint256 waterLost = depletionIntervals * WATER_DEPLETION_RATE;
 
-        return plants[plantId].waterLevel - uint8(waterLost);
+        if (waterLost >= plant.waterLevel) {
+            return 0;
+        }
+
+        return plant.waterLevel - uint8(waterLost);
     }
 
-    function updateWaterLevel(uint256 plantId) internal{
-        Plant storage plant = plants[plantId];
-            uint8 currentWater = calculateWaterLevel(plantId);
+    // [3]
+    function updateWaterLevel(uint256 _plantId) internal {
+        Plant storage plant = plants[_plantId];
+
+        uint256 timeSinceWatered = block.timestamp - plant.lastWatered;
+        uint256 depletionIntervals = timeSinceWatered / WATER_DEPLETION_TIME;
+
+        if (depletionIntervals > 0) {
+            uint8 currentWater = calculateWaterLevel(_plantId);
 
             plant.waterLevel = currentWater;
-            plant.lastWatered = block.timestamp;
+            plant.lastWatered =
+                plant.lastWatered +
+                (depletionIntervals * WATER_DEPLETION_TIME);
 
             if (currentWater == 0 && !plant.isDead) {
                 plant.isDead = true;
-                emit PlantDied(plantId);
+                emit PlantDied(_plantId);
             }
-    }
-
-    function waterPlant(uint256 plantId) external {
-        Plant storage plant = plants[plantId];
-
-        if(plant.exist && msg.sender == owner && !plant.isDead){
-            plant.waterLevel = 100;
-            plant.lastWatered = block.timestamp;
-
-            emit PlantWatered(plantId, plant.waterLevel);
-            updatePlantStage(plantId);
         }
     }
 
-    function updatePlantStage(uint256 plantId) public {
-        Plant storage plant = plants[plantId];
-        if(plant.stage == GrowthStage.SEED){
-            plant.stage = GrowthStage.SPROUT;
-        } else if (plant.stage == GrowthStage.SPROUT) {
-            plant.stage = GrowthStage.GROWING;
-        } else if (plant.stage == GrowthStage.GROWING){
-            plant.stage == GrowthStage.BLOOMING;
-        } else if (plant.stage == GrowthStage.BLOOMING) {
-            plant.stage == GrowthStage.BLOOMING;
+    // [4]
+    function waterPlant(uint256 _plantId) external onlyPlantOwner(_plantId) {
+        Plant storage plant = plants[_plantId];
+
+        require(plant.exist, "Tidak ada plant");
+        require(!plant.isDead, "Plant sudah mati");
+
+        plant.waterLevel = 100;
+        plant.lastWatered = block.timestamp;
+
+        emit PlantWatered(_plantId, plant.waterLevel);
+
+        updatePlantStage(_plantId);
+    }
+
+    // [5]
+    function updatePlantStage(uint256 _plantId) public {
+        Plant storage plant = plants[_plantId];
+
+        require(plant.exist, "Tidak ada plant");
+
+        updateWaterLevel(_plantId);
+
+        if (plant.isDead) {
+            return;
+        }
+
+        GrowthStage oldStage = plant.stage;
+
+        if (plant.stage != GrowthStage.BLOOMING) {
+            uint256 timeSincePlanted = block.timestamp - plant.plantedDate;
+
+            // SEED -> SPROUT (1 * STAGE_DURATION)
+            if (
+                plant.stage == GrowthStage.SEED &&
+                timeSincePlanted >= STAGE_DURATION
+            ) {
+                plant.stage = GrowthStage.SPROUT;
+            }
+            // SPROUT -> GROWING (2 * STAGE_DURATION)
+            else if (
+                plant.stage == GrowthStage.SPROUT &&
+                timeSincePlanted >= (STAGE_DURATION * 2)
+            ) {
+                plant.stage = GrowthStage.GROWING;
+            }
+            // GROWING -> BLOOMING (3 * STAGE_DURATION)
+            else if (
+                plant.stage == GrowthStage.GROWING &&
+                timeSincePlanted >= (STAGE_DURATION * 3)
+            ) {
+                plant.stage = GrowthStage.BLOOMING;
+            }
+        }
+
+        if (plant.stage != oldStage) {
+            emit StageAdvanced(_plantId, plant.stage);
         }
     }
 
-    function harvestPlant(uint256 plantId) external {
-        Plant storage plant = plants[plantId];
-        if(plant.exist && msg.sender == owner && !plant.isDead){
-            updatePlantStage(plantId);
+    // [6]
+    function harvestPlant(uint256 _plantId) external onlyPlantOwner(_plantId) {
+        Plant storage plant = plants[_plantId];
 
-            require(plant.stage == GrowthStage.BLOOMING, "Belum di Stage Blooming");
+        require(plant.exist, "Tidak ada plant");
+        require(!plant.isDead, "Plant sudah mati");
 
-            plant.exist = false;
+        updatePlantStage(_plantId);
+        require(plant.stage == GrowthStage.BLOOMING, "Belum BLOOMING");
 
-            emit PlantHarvested(plantId, owner, HARVEST_REWARD);
+        plant.exist = false;
 
-            (bool success, ) = msg.sender.call{value: HARVEST_REWARD}("");
+        emit PlantHarvested(_plantId, plant.owner, HARVEST_REWARD);
 
-            require(success, "Transfer reward gagal.");
-        }
+        (bool success, ) = msg.sender.call{value: HARVEST_REWARD}("");
+        require(success, "Transfer reward gagal.");
     }
 
     // 7. Helper Functions (3 functions)
-    function getPlant(uint256 plantId) external view returns (Plant memory){
-        Plant memory plant = plants[plantId];
-        if (plant.exist) {
-            plant.waterLevel = calculateWaterLevel(plantId);
-        }
+    // [1]
+    function getPlant(uint256 _plantId) external view returns (Plant memory) {
+        Plant memory plant = plants[_plantId];
+
+        require(plants[_plantId].exist, "Tidak ada plant");
+        plant.waterLevel = calculateWaterLevel(_plantId);
+
         return plant;
     }
-    function getUserPlants(address userAdr) external view returns (uint256[] memory){
-        return userPlants[userAdr];
-     }
 
+    // [2]
+    function getUserPlants(
+        address user
+    ) external view returns (uint256[] memory) {
+        return userPlants[user];
+    }
+
+    // [3]
     function withdraw() external {
         require(msg.sender == owner, "Bukan Owner");
         (bool success, ) = msg.sender.call{value: address(this).balance}("");
